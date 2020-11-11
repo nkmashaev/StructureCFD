@@ -174,3 +174,59 @@ def divergence(
 
                     div[i][j] = div[i][j] + np.dot(scalar_f * var_f, s_f[i_face])
             div[i][j] = div[i][j] / vol
+
+
+def curl(
+    i_size: int,
+    j_size: int,
+    var: np.ndarray,
+    curl_z: np.ndarray,
+    cell_center_arr: np.ndarray,
+    cell_volume_arr: np.ndarray,
+    i_face_center_arr: np.ndarray,
+    i_face_vector_arr: np.ndarray,
+    j_face_center_arr: np.ndarray,
+    j_face_vector_arr: np.ndarray,
+):
+    n_cell = np.zeros((4, 2), dtype=int)
+    r_f = np.zeros((4, 2))
+    s_f = np.zeros((4, 2))
+    r_c = np.zeros((4, 2))
+    vol = 0.0
+    for i in range(1, i_size):
+        for j in range(1, j_size):
+            n_cell[0] = np.array([i - 1, j], dtype=int)
+            n_cell[1] = np.array([i + 1, j], dtype=int)
+            n_cell[2] = np.array([i, j - 1], dtype=int)
+            n_cell[3] = np.array([i, j + 1], dtype=int)
+
+            r_f[0] = i_face_center_arr[i - 1, j - 1]
+            r_f[1] = i_face_center_arr[i, j - 1]
+            r_f[2] = j_face_center_arr[i - 1, j - 1]
+            r_f[3] = j_face_center_arr[i - 1, j]
+
+            s_f[0] = -i_face_vector_arr[i - 1, j - 1]
+            s_f[1] = i_face_vector_arr[i, j - 1]
+            s_f[2] = -j_face_vector_arr[i - 1, j - 1]
+            s_f[3] = j_face_vector_arr[i - 1, j]
+
+            vol = cell_volume_arr[i - 1, j - 1]
+            r_c = cell_center_arr[i, j]
+
+            for i_face, neighbour in enumerate(n_cell):
+                i_n = neighbour[0]
+                j_n = neighbour[1]
+                r_n = cell_center_arr[i_n][j_n]
+                d_c = LA.norm(r_f[i_face] - r_c)
+                d_n = LA.norm(r_f[i_face] - r_n)
+
+                var_f = np.array(
+                    [
+                        func.linear_interpolation(
+                            d_c, d_n, var[i][j][k], var[i_n][j_n][k]
+                        )
+                        for k in range(2)
+                    ]
+                )
+                curl_z[i][j] = curl_z[i][j] + np.cross(var_f, s_f[i_face])
+            curl_z[i][j] = curl_z[i][j] / vol

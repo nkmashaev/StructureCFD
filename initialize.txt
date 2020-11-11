@@ -1,0 +1,3 @@
+grids/base.msh           # grid file
+1                       # Green Gauss Iter Numb
+0                        # mode
