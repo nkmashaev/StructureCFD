@@ -22,10 +22,13 @@ def grad_center_init(x: float, y: float) -> np.ndarray:
 
 
 def vector_center_init(x: float, y: float) -> np.ndarray:
-    init_vect = np.array((x, y))
+    init_vect = np.array((1.0 + x, 1.0 + y))
     return init_vect
 
 
-def div_center_init(x: float, y: float) -> float:
-    exact_div = 2.0
+def div_center_init(x: float, y: float, mode: int = 0) -> float:
+    if mode == 0:
+        exact_div = 2.0
+    else:
+        exact_div = 2.0 + 3.0 * x + 3.0 * y
     return exact_div
