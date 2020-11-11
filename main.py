@@ -1,3 +1,4 @@
+import os
 from typing import Tuple
 
 import numpy as np
@@ -7,7 +8,8 @@ import cfd.functions as func
 import gridtools.grid_manager as gm
 
 dim = 2
-file_name = input("Input file name: ")
+mode = 3
+file_name = os.path.join("grids", "base.msh")
 
 x_arr, y_arr = gm.read_grid(file_name)
 i_size, j_size = x_arr.shape
@@ -52,7 +54,7 @@ for i in range(i_size + 1):
             cell_center_arr[i][j][0], cell_center_arr[i][j][1]
         )
         div_exact[i][j] = func.div_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1]
+            cell_center_arr[i][j][0], cell_center_arr[i][j][1], mode
         )
 
 iter_numb = 15
@@ -73,17 +75,21 @@ for i in range(iter_numb):
     max_grad_err = np.max(grad_error[1:i_size, 1:j_size])
     print(f"Maximum grad_error is {max_grad_err:.11E}")
 
+
 fop.divergence(
     i_size,
     j_size,
     velocity_arr,
     div_velocity,
+    pressure_arr,
+    grad_pressure,
     cell_center_arr,
     cell_volume_arr,
     i_face_center_arr,
     i_face_vector_arr,
     j_face_center_arr,
     j_face_vector_arr,
+    mode,
 )
 div_error = abs(div_exact - div_velocity) / div_exact
 max_div_err = np.amax(div_error[1:i_size, 1:j_size])
