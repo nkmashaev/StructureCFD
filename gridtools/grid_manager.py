@@ -105,6 +105,8 @@ def output_data(
     grad_error: np.ndarray,
     div_velocity: np.ndarray,
     div_error: np.ndarray,
+    curl_z_velocity: np.ndarray,
+    curl_z_error: np.ndarray,
 ):
     with open(file_path, "w") as out_file:
         out_file.write(
@@ -119,11 +121,13 @@ def output_data(
             ' "PressureGradientErrX", '
             ' "PressureGradientErrY", '
             ' "VelocityDivergence", '
-            ' "VelocityDivergenceErr"\n'
+            ' "VelocityDivergenceErr", '
+            ' "CurlVelocityZ", '
+            ' "CurlZError"\n'
         )
         out_file.write(
             f"ZONE I={i_size}, J={j_size},"
-            "DATAPACKING=BLOCK, VARLOCATION=([3-11]=CELLCENTERED)\n"
+            "DATAPACKING=BLOCK, VARLOCATION=([3-13]=CELLCENTERED)\n"
         )
         for i in range(i_size):
             for j in range(j_size):
@@ -178,4 +182,14 @@ def output_data(
         for i in range(1, i_size):
             for j in range(1, j_size):
                 out_file.write(f"{div_error[i][j]:.11E} ")
+        out_file.write("\n")
+
+        for i in range(1, i_size):
+            for j in range(1, j_size):
+                out_file.write(f"{curl_z_velocity[i][j]:.11E} ")
+        out_file.write("\n")
+
+        for i in range(1, i_size):
+            for j in range(1, j_size):
+                out_file.write(f"{curl_z_error[i][j]:.11E} ")
         out_file.write("\n")
