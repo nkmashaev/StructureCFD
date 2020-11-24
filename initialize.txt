@@ -1,3 +1,4 @@
-grids/base.msh           # grid file
-1                       # Green Gauss Iter Numb
-0                        # mode
+grids/Re1000.plt          # grid file
+1                        # Gradient Calc Method
+15                       # Green Gauss Iter Numb
+3                        # mode
