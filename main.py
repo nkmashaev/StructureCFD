@@ -7,7 +7,6 @@ from typing import Any, Callable, Tuple
 import numpy as np
 from numpy import linalg as LA
 
-import cfd.field_operators as fop
 import cfd.functions as func
 import gridtools.grid_manager as gm
 
@@ -46,14 +45,6 @@ grid.read_grid_and_data(file_name)
 print(f"Reading {file_name} mesh file is done!")
 grid.explicit_solve()
 grid.write()
-
-# func.init.p = func.constant_val(0.5)
-# func.init.T = func.constant_val(0.5)
-# func.init.u = func.constant_val(0.5)
-# func.init.v = func.constant_val(0.5)
-# grid.init_var(func.init.p, func.init.T, func.init.u, func.init.v)
-# grid.explicit_solve()
-# grid.write()
 
 # func.init.p = func.coord_deg_sum(1)
 # func.init.T = func.coord_deg_sum(2)

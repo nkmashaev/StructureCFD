@@ -11,7 +11,7 @@ import cfd.functions as func
 
 def with_iteration(numb: int) -> Callable[[Any], Any]:
     def decorator(func: Callable[[Any], Any]):
-        # @functools.wraps(func)
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             for i in range(numb):
                 func(*args, **kwargs)
@@ -150,6 +150,15 @@ class Grid2D:
         "__laplacian_T",
         "__div_pV",
         "__div_TV",
+        "__theta",
+        "__dc",
+        "__dn",
+        "__mf",
+        "__dnc",
+        "__nf_rnc",
+        "__nf",
+        "__rnf",
+        "__rcf",
     )
 
     def __init__(self):
@@ -177,6 +186,15 @@ class Grid2D:
         self.__div_Vv = None
         self.__laplacian_u = None
         self.__laplacian_v = None
+        self.__theta = None
+        self.__dc = None
+        self.__dn = None
+        self.__dnc = None
+        self.__mf = None
+        self.__nf_rnc = None
+        self.__rnf = None
+        self.__rcf = None
+        self.__nf = None
         self.__ni = 0
         self.__nj = 0
 
@@ -200,6 +218,10 @@ class Grid2D:
         out.save_scalar("X-GradientV", self.__grad_v[:, :, 0])
         out.save_scalar("Y-GradientV", self.__grad_v[:, :, 1])
         out.save_scalar("Velocity Divergence", self.__div_V)
+        out.save_scalar("U Convective Div", self.__div_Vu[:, :])
+        out.save_scalar("V Convective Div", self.__div_Vv[:, :])
+        out.save_scalar("U Laplacian", self.__laplacian_u[:, :])
+        out.save_scalar("V Laplacian", self.__laplacian_v[:, :])
         out.save_scalar("Z-Curl Velocity", self.__curl_Vz)
         out.output("data.plt")
 
@@ -257,64 +279,176 @@ class Grid2D:
         )
         return sf
 
-    def __green_gauss(self, i: int, j: int, var: np.ndarray, grad: np.ndarray):
+    def __init_field_operator(self):
+
+        self.__theta = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        self.__dc = np.zeros((self.__ni + 1, self.__nj + 1, 4), dtype=float)
+        self.__dn = np.zeros((self.__ni + 1, self.__nj + 1, 4), dtype=float)
+        self.__dnc = np.zeros((self.__ni + 1, self.__nj + 1, 4), dtype=float)
+        self.__mf = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        self.__nf_rnc = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        self.__nf = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        self.__rnf = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        self.__rcf = np.zeros((self.__ni + 1, self.__nj + 1, 4, 2), dtype=float)
+        for i in range(1, self.__ni):
+            for j in range(1, self.__nj):
+                ncell = self.__neighbour_cells(i, j)
+                sf = self.__sf(i, j)
+                rc = self.__cell_center[i, j, :]
+                rf = self.__rf(i, j)
+                dx_dx = 0.0
+                dx_dy = 0.0
+                dy_dy = 0.0
+                for iface, neighbour in enumerate(ncell):
+                    i_n, j_n = neighbour
+                    rn = self.__cell_center[i_n, j_n, :]
+                    dx = rn[0] - rc[0]
+                    dy = rn[1] - rc[1]
+                    self.__dc[i, j, iface] = LA.norm(rf[iface, :] - rc[:])
+                    self.__dn[i, j, iface] = LA.norm(rf[iface, :] - rn[:])
+                    self.__rnf[i, j, iface, :] = rf[iface, :] - rn[:]
+                    self.__rcf[i, j, iface, :] = rf[iface, :] - rc[:]
+                    rm = np.array(
+                        [
+                            func.linear_interpolation(
+                                self.__dc[i, j, iface],
+                                self.__dn[i, j, iface],
+                                rc[k],
+                                rn[k],
+                            )
+                            for k in range(2)
+                        ],
+                        dtype=float,
+                    )
+                    self.__mf[i, j, iface, :] = rf[iface, :] - rm[:]
+                    self.__nf[i, j, iface, :] = sf[iface, :] / LA.norm(sf[iface, :])
+                    self.__dnc[i, j, iface] = LA.norm(rn[:] - rc[:])
+                    self.__nf_rnc[i, j, iface, :] = (
+                        self.__nf[i, j, iface, :]
+                        - (rn[:] - rc[:]) / self.__dnc[i, j, iface]
+                    )
+                    weight = 1 / (dx * dx + dy * dy)
+                    dx_dx += dx * dx * weight
+                    dx_dy += dx * dy * weight
+                    dy_dy += dy * dy * weight
+                r11 = np.sqrt(dx_dx)
+                r12 = dx_dy / r11
+                r22 = np.sqrt(dy_dy - r12 * r12)
+
+                for iface, neighbour in enumerate(ncell):
+                    i_n, j_n = neighbour
+                    rn = self.__cell_center[i_n, j_n, :]
+                    dx = rn[0] - rc[0]
+                    dy = rn[1] - rc[1]
+                    weight = 1 / (dx * dx + dy * dy)
+                    a1 = dx / (r11 * r11)
+                    a2 = (dy - r12 * dx / r11) / (r22 * r22)
+                    self.__theta[i, j, iface, :] = (
+                        np.array([a1 - r12 * a2 / r11, a2]) * weight
+                    )
+
+    def __green_gauss_scalar(self, i: int, j: int, var: np.ndarray, grad: np.ndarray):
 
         ncell = self.__neighbour_cells(i, j)
-        rf = self.__rf(i, j)
         sf = self.__sf(i, j)
         vol = self.__cell_volume[i - 1, j - 1]
-        rc = self.__cell_center[i, j, :]
         gradc = np.zeros(2)
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dc = LA.norm(rf[iface, :] - rc[:])
-            dn = LA.norm(rf[iface, :] - rn[:])
-            xm = func.linear_interpolation(dc, dn, var[i, j], var[i_n, j_n])
-            rm = np.array(
-                [func.linear_interpolation(dc, dn, rc[k], rn[k]) for k in range(2)],
-                dtype=float,
+            xm = func.linear_interpolation(
+                self.__dc[i, j, iface], self.__dn[i, j, iface], var[i, j], var[i_n, j_n]
             )
             gradm = np.array(
                 [
-                    func.linear_interpolation(dc, dn, grad[i, j, k], grad[i_n, j_n, k])
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad[i, j, k],
+                        grad[i_n, j_n, k],
+                    )
                     for k in range(2)
                 ],
                 dtype=float,
             )
-            xf = xm + np.dot(rf[iface, :] - rm[:], gradm[:])
+            xf = xm + np.dot(self.__mf[i, j, iface, :], gradm[:])
             gradc[:] += xf * sf[iface, :]
         grad[i, j, :] = gradc[:] / vol
 
-    def __least_squares(self, i: int, j: int, var: np.ndarray, grad: np.ndarray):
-        ncell = self.__neighbour_cells(i, j)
-        rc = self.__cell_center[i, j, :]
-        dx_dx = 0.0
-        dx_dy = 0.0
-        dy_dy = 0.0
-        for iface, neighbour in enumerate(ncell):
-            i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dx = rn[0] - rc[0]
-            dy = rn[1] - rc[1]
-            weight = 1 / (dx * dx + dy * dy)
-            dx_dx += dx * dx * weight
-            dx_dy += dx * dy * weight
-            dy_dy += dy * dy * weight
-        r11 = np.sqrt(dx_dx)
-        r12 = dx_dy / r11
-        r22 = np.sqrt(dy_dy - r12 * r12)
+    def __green_gauss_vector(
+        self, i: int, j: int, var: np.ndarray, gradx: np.ndarray, grady: np.ndarray
+    ):
 
+        ncell = self.__neighbour_cells(i, j)
+        sf = self.__sf(i, j)
+        vol = self.__cell_volume[i - 1, j - 1]
+        gradcx = np.zeros(2)
+        gradcy = np.zeros(2)
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dx = rn[0] - rc[0]
-            dy = rn[1] - rc[1]
-            weight = 1 / (dx * dx + dy * dy)
-            a1 = dx / (r11 * r11)
-            a2 = (dy - r12 * dx / r11) / (r22 * r22)
-            theta = np.array([a1 - r12 * a2 / r11, a2])
-            grad[i, j, :] += weight * theta[:] * (var[i_n, j_n] - var[i, j])
+            xm = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        var[i, j, k],
+                        var[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+
+            gradmx = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        gradx[i, j, k],
+                        gradx[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+
+            gradmy = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grady[i, j, k],
+                        grady[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+
+            xfx = xm[0] + np.dot(self.__mf[i, j, iface, :], gradmx[:])
+            xfy = xm[1] + np.dot(self.__mf[i, j, iface, :], gradmy[:])
+            gradcx[:] += xfx * sf[iface, :]
+            gradcy[:] += xfy * sf[iface, :]
+        gradx[i, j, :] = gradcx[:] / vol
+        grady[i, j, :] = gradcy[:] / vol
+
+    def __least_squares_scalar(self, i: int, j: int, var: np.ndarray, grad: np.ndarray):
+        ncell = self.__neighbour_cells(i, j)
+        for iface, neighbour in enumerate(ncell):
+            i_n, j_n = neighbour
+            grad[i, j, :] += self.__theta[i, j, iface, :] * (var[i_n, j_n] - var[i, j])
+
+    def __least_squares_vector(
+        self, i: int, j: int, var: np.ndarray, gradx: np.ndarray, grady: np.ndarray
+    ):
+        ncell = self.__neighbour_cells(i, j)
+        for iface, neighbour in enumerate(ncell):
+            i_n, j_n = neighbour
+            gradx[i, j, :] += self.__theta[i, j, iface, :] * (
+                var[i_n, 0] - var[i, j, 0]
+            )
+            grady[i, j, :] += self.__theta[i, j, iface, :] * (
+                var[i_n, 1] - var[i, j, 1]
+            )
 
     def __divergence(
         self,
@@ -326,31 +460,30 @@ class Grid2D:
         div: np.ndarray,
     ):
         ncell = self.__neighbour_cells(i, j)
-        rf = self.__rf(i, j)
         sf = self.__sf(i, j)
         vol = self.__cell_volume[i - 1, j - 1]
-        rc = self.__cell_center[i, j, :]
         xf = np.zeros(2)
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dc = LA.norm(rf[iface, :] - rc[:])
-            dn = LA.norm(rf[iface, :] - rn[:])
             xm = np.array(
                 [
-                    func.linear_interpolation(dc, dn, var[i, j, k], var[i_n, j_n, k])
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        var[i, j, k],
+                        var[i_n, j_n, k],
+                    )
                     for k in range(2)
                 ],
-                dtype=float,
-            )
-            rm = np.array(
-                [func.linear_interpolation(dc, dn, rc[k], rn[k]) for k in range(2)],
                 dtype=float,
             )
             gradm_x = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, gradx[i, j, k], gradx[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        gradx[i, j, k],
+                        gradx[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
@@ -359,18 +492,21 @@ class Grid2D:
             gradm_y = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, grady[i, j, k], grady[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grady[i, j, k],
+                        grady[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
                 dtype=float,
             )
-            xf[0] = xm[0] + np.dot(rf[iface, :] - rm[:], gradm_x[:])
-            xf[1] = xm[1] + np.dot(rf[iface, :] - rm[:], gradm_y[:])
+            xf[0] = xm[0] + np.dot(self.__mf[i, j, iface, :], gradm_x[:])
+            xf[1] = xm[1] + np.dot(self.__mf[i, j, iface, :], gradm_y[:])
             div[i, j] += np.dot(xf[:], sf[iface, :])
         div[i, j] = div[i, j] / vol
 
-    def __conv_div(
+    def __conv_div_scalar(
         self,
         i: int,
         j: int,
@@ -383,31 +519,30 @@ class Grid2D:
         grad_u = self.__grad_u
         grad_v = self.__grad_v
         ncell = self.__neighbour_cells(i, j)
-        rf = self.__rf(i, j)
         sf = self.__sf(i, j)
         vol = self.__cell_volume[i - 1, j - 1]
-        rc = self.__cell_center[i, j, :]
         velf = np.zeros(2)
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dc = LA.norm(rf[iface, :] - rc[:])
-            dn = LA.norm(rf[iface, :] - rn[:])
             velm = np.array(
                 [
-                    func.linear_interpolation(dc, dn, vel[i, j, k], vel[i_n, j_n, k])
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        vel[i, j, k],
+                        vel[i_n, j_n, k],
+                    )
                     for k in range(2)
                 ],
-                dtype=float,
-            )
-            rm = np.array(
-                [func.linear_interpolation(dc, dn, rc[k], rn[k]) for k in range(2)],
                 dtype=float,
             )
             gradm_u = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, grad_u[i, j, k], grad_u[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad_u[i, j, k],
+                        grad_u[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
@@ -416,16 +551,24 @@ class Grid2D:
             gradm_v = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, grad_v[i, j, k], grad_v[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad_v[i, j, k],
+                        grad_v[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
                 dtype=float,
             )
-            velf[0] = velm[0] + np.dot(rf[iface, :] - rm[:], gradm_u[:])
-            velf[1] = velm[1] + np.dot(rf[iface, :] - rm[:], gradm_v[:])
+            velf[0] = velm[0] + np.dot(self.__mf[i, j, iface, :], gradm_u[:])
+            velf[1] = velm[1] + np.dot(self.__mf[i, j, iface, :], gradm_v[:])
             if mode == 1:
-                xf = func.linear_interpolation(dc, dn, var[i, j], var[i_n, j_n])
+                xf = func.linear_interpolation(
+                    self.__dc[i, j, iface],
+                    self.__dn[i, j, iface],
+                    var[i, j],
+                    var[i_n, j_n],
+                )
                 cdiv[i, j] += np.dot(xf * velf[:], sf[iface, :])
             elif mode == 2:
                 if np.dot(velf[:], sf[iface, :]) >= 0:
@@ -435,24 +578,154 @@ class Grid2D:
                         xf = 2.0 * var[i_n, j_n] - var[i, j]
                     else:
                         xf = var[i_n, j_n]
-                cdiv[i][j] += np.dot(xf * velf[:], sf[iface, :])
+                cdiv[i, j] += np.dot(xf * velf[:], sf[iface, :])
             elif mode == 3:
                 if np.dot(velf[:], sf[iface, :]) >= 0:
-                    xf = var[i, j] + np.dot(grad[i, j, :], rf[iface, :] - rc[:])
+                    xf = var[i, j] + np.dot(grad[i, j, :], self.__rcf[i, j, iface, :])
                 else:
                     if self.is_boundary(i_n, j_n):
                         xf_fo = 2.0 * var[i_n, j_n] - var[i, j]
-                        grad_c_dot_r = np.dot(grad[i, j, :], rc[:] - rf[iface, :])
+                        grad_c_dot_r = -np.dot(
+                            grad[i, j, :], self.__rcf[i, j, iface, :]
+                        )
                         grad_b_dot_r = var[i, j] - var[i_n, j_n]
                         grad_d_dot_r = 4.0 * grad_b_dot_r - 3.0 * grad_c_dot_r
                         xf = xf_fo + grad_d_dot_r
                     else:
                         xf = var[i_n, j_n] + np.dot(
-                            grad[i_n, j_n, :], rf[iface, :] - rn[:]
+                            grad[i_n, j_n, :], self.__rnf[i, j, iface, :]
                         )
 
-                cdiv[i][j] += np.dot(xf * velf, sf[iface, :])
+                cdiv[i, j] += np.dot(xf * velf, sf[iface, :])
         cdiv[i, j] /= vol
+
+    def __conv_div_vector(
+        self,
+        i: int,
+        j: int,
+        var: np.ndarray,
+        gradx: np.ndarray,
+        grady: np.ndarray,
+        cdivx: np.ndarray,
+        cdivy: np.ndarray,
+        mode: int,
+    ):
+        vel = self.__V
+        grad_u = self.__grad_u
+        grad_v = self.__grad_v
+        ncell = self.__neighbour_cells(i, j)
+        sf = self.__sf(i, j)
+        vol = self.__cell_volume[i - 1, j - 1]
+        velf = np.zeros(2)
+        for iface, neighbour in enumerate(ncell):
+            i_n, j_n = neighbour
+            velm = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        vel[i, j, k],
+                        vel[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+            gradm_u = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad_u[i, j, k],
+                        grad_u[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+            gradm_v = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad_v[i, j, k],
+                        grad_v[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+            velf[0] = velm[0] + np.dot(self.__mf[i, j, iface, :], gradm_u[:])
+            velf[1] = velm[1] + np.dot(self.__mf[i, j, iface, :], gradm_v[:])
+            if mode == 1:
+                xf = np.array(
+                    [
+                        func.linear_interpolation(
+                            self.__dc[i, j, iface],
+                            self.__dn[i, j, iface],
+                            var[i, j, k],
+                            var[i_n, j_n, k],
+                        )
+                        for k in range(2)
+                    ],
+                    dtype=float,
+                )
+                cdivx[i, j] += np.dot(xf[0] * velf[:], sf[iface, :])
+                cdivy[i, j] += np.dot(xf[1] * velf[:], sf[iface, :])
+            elif mode == 2:
+                if np.dot(velf[:], sf[iface, :]) >= 0:
+                    xf = np.array([var[i, j, k] for k in range(2)], dtype=float)
+                else:
+                    if self.is_boundary(i_n, j_n):
+                        xf = np.array(
+                            [2.0 * var[i_n, j_n, k] - var[i, j, k] for k in range(2)],
+                            dtype=float,
+                        )
+                    else:
+                        xf = np.array([var[i_n, j_n, k] for k in range(2)], dtype=float)
+                cdivx[i, j] += np.dot(xf[0] * velf[:], sf[iface, :])
+                cdivy[i, j] += np.dot(xf[1] * velf[:], sf[iface, :])
+            elif mode == 3:
+                if np.dot(velf[:], sf[iface, :]) >= 0:
+                    xf = np.zeros(2, dtype=float)
+                    xf[0] = var[i, j, 0] + np.dot(
+                        gradx[i, j, :], self.__rcf[i, j, iface, :]
+                    )
+                    xf[1] = var[i, j, 1] + np.dot(
+                        grady[i, j, :], self.__rcf[i, j, iface, :]
+                    )
+                else:
+                    if self.is_boundary(i_n, j_n):
+                        xf_fo = np.array(
+                            [2.0 * var[i_n, j_n, k] - var[i, j, k] for k in range(2)],
+                            dtype=float,
+                        )
+                        grad_c_dot_r = np.zeros(2, dtype=float)
+                        grad_c_dot_r[0] = -np.dot(
+                            gradx[i, j, :], self.__rcf[i, j, iface, :]
+                        )
+                        grad_c_dot_r[1] = -np.dot(
+                            grady[i, j, :], self.__rcf[i, j, iface, :]
+                        )
+                        grad_b_dot_r = np.array(
+                            [var[i, j, k] - var[i_n, j_n, k] for k in range(2)],
+                            dtype=float,
+                        )
+                        grad_d_dot_r = 4.0 * grad_b_dot_r - 3.0 * grad_c_dot_r
+                        xf = xf_fo[:] + grad_d_dot_r[:]
+                    else:
+                        xf = np.zeros(2, dtype=float)
+                        xf[0] = var[i_n, j_n, 0] + np.dot(
+                            gradx[i_n, j_n, :], self.__rnf[i, j, iface, :]
+                        )
+                        xf[1] = var[i_n, j_n, 1] + np.dot(
+                            grady[i_n, j_n, :], self.__rnf[i, j, iface, :]
+                        )
+
+                cdivx[i, j] += np.dot(xf[0] * velf, sf[iface, :])
+                cdivy[i, j] += np.dot(xf[1] * velf, sf[iface, :])
+        cdivx[i, j] /= vol
+        cdivy[i, j] /= vol
 
     def __curl(
         self,
@@ -464,31 +737,30 @@ class Grid2D:
         curl_z: np.ndarray,
     ):
         ncell = self.__neighbour_cells(i, j)
-        rf = self.__rf(i, j)
         sf = self.__sf(i, j)
         vol = self.__cell_volume[i - 1, j - 1]
-        rc = self.__cell_center[i, j, :]
         xf = np.zeros(2)
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dc = LA.norm(rf[iface, :] - rc[:])
-            dn = LA.norm(rf[iface, :] - rn[:])
             xm = np.array(
                 [
-                    func.linear_interpolation(dc, dn, var[i, j, k], var[i_n, j_n, k])
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        var[i, j, k],
+                        var[i_n, j_n, k],
+                    )
                     for k in range(2)
                 ],
-                dtype=float,
-            )
-            rm = np.array(
-                [func.linear_interpolation(dc, dn, rc[k], rn[k]) for k in range(2)],
                 dtype=float,
             )
             gradm_x = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, gradx[i, j, k], gradx[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        gradx[i, j, k],
+                        gradx[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
@@ -497,50 +769,112 @@ class Grid2D:
             gradm_y = np.array(
                 [
                     func.linear_interpolation(
-                        dc, dn, grady[i, j, k], grady[i_n, j_n, k]
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grady[i, j, k],
+                        grady[i_n, j_n, k],
                     )
                     for k in range(2)
                 ],
                 dtype=float,
             )
-            xf[0] = xm[0] + np.dot(rf[iface, :] - rm[:], gradm_x[:])
-            xf[1] = xm[1] + np.dot(rf[iface, :] - rm[:], gradm_y[:])
+            xf[0] = xm[0] + np.dot(self.__mf[i, j, iface, :], gradm_x[:])
+            xf[1] = xm[1] + np.dot(self.__mf[i, j, iface, :], gradm_y[:])
             curl_z[i, j] += np.cross(xf[:], sf[iface, :])
         curl_z[i, j] = curl_z[i, j] / vol
 
-    def __laplacian(
+    def __laplacian_scalar(
         self, i: int, j: int, var: np.ndarray, grad: np.ndarray, laplacian: np.ndarray
     ):
         ncell = self.__neighbour_cells(i, j)
-        rf = self.__rf(i, j)
         sf = self.__sf(i, j)
         vol = self.__cell_volume[i - 1, j - 1]
-        rc = self.__cell_center[i, j, :]
         for iface, neighbour in enumerate(ncell):
             i_n, j_n = neighbour
-            rn = self.__cell_center[i_n, j_n, :]
-            dc = LA.norm(rf[iface, :] - rc[:])
-            dn = LA.norm(rf[iface, :] - rn[:])
-            dnc = LA.norm(rn[:] - rc[:])
-            nf = sf[iface, :] / LA.norm(sf[iface, :])
-            rnc = (rn[:] - rc[:]) / dnc
             gradf = np.array(
                 [
-                    func.linear_interpolation(dc, dn, grad[i, j, k], grad[i_n, j_n, k])
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grad[i, j, k],
+                        grad[i_n, j_n, k],
+                    )
                     for k in range(2)
                 ],
                 dtype=float,
             )
-            dxdn = (var[i_n, j_n] - var[i, j]) / dnc
+            dxdn = (var[i_n, j_n] - var[i, j]) / self.__dnc[i, j, iface]
 
             if self.is_boundary(i_n, j_n):
-                dxdn_c = np.dot(grad[i, j, :], nf[:])
+                dxdn_c = np.dot(grad[i, j, :], self.__nf[i, j, iface, :])
                 dxdn = (5.0 * dxdn - 2.0 * dxdn_c) / 3.0
                 gradf[:] = grad[i, j, :]
 
-            dxdn += np.dot(nf[:] - rnc[:], gradf[:])
+            dxdn += np.dot(self.__nf_rnc[i, j, iface, :], gradf[:])
             laplacian[i, j] += dxdn * LA.norm(sf[iface, :])
         laplacian[i, j] /= vol
+
+    def __laplacian_vector(
+        self,
+        i: int,
+        j: int,
+        var: np.ndarray,
+        gradx: np.ndarray,
+        grady: np.ndarray,
+        laplacianx: np.ndarray,
+        laplaciany: np.ndarray,
+    ):
+        ncell = self.__neighbour_cells(i, j)
+        sf = self.__sf(i, j)
+        vol = self.__cell_volume[i - 1, j - 1]
+        for iface, neighbour in enumerate(ncell):
+            i_n, j_n = neighbour
+            gradfx = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        gradx[i, j, k],
+                        gradx[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+            gradfy = np.array(
+                [
+                    func.linear_interpolation(
+                        self.__dc[i, j, iface],
+                        self.__dn[i, j, iface],
+                        grady[i, j, k],
+                        grady[i_n, j_n, k],
+                    )
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+            dxdn = np.array(
+                [
+                    (var[i_n, j_n, k] - var[i, j, k]) / self.__dnc[i, j, iface]
+                    for k in range(2)
+                ],
+                dtype=float,
+            )
+
+            if self.is_boundary(i_n, j_n):
+                dxdn_c = np.zeros(2)
+                dxdn_c[0] = np.dot(gradx[i, j, :], self.__nf[i, j, iface, :])
+                dxdn_c[1] = np.dot(grady[i, j, :], self.__nf[i, j, iface, :])
+                dxdn[:] = (5.0 * dxdn[:] - 2.0 * dxdn_c[:]) / 3.0
+                gradfx[:] = gradx[i, j, :]
+                gradfy[:] = grady[i, j, :]
+
+            dxdn[0] += np.dot(self.__nf_rnc[i, j, iface, :], gradfx[:])
+            dxdn[1] += np.dot(self.__nf_rnc[i, j, iface, :], gradfy[:])
+            laplacianx[i, j] += dxdn[0] * LA.norm(sf[iface, :])
+            laplaciany[i, j] += dxdn[1] * LA.norm(sf[iface, :])
+        laplacianx[i, j] /= vol
+        laplaciany[i, j] /= vol
 
     def __calc_metric(self):
         """
@@ -705,6 +1039,7 @@ class Grid2D:
             # reshape 1-D input arrays to 2-D
             self.__nodes = nodes.reshape((self.__ni, self.__nj, 2))
         self.__calc_metric()
+        self.__init_field_operator()
 
     def read_grid_and_data(self, file_name: str):
         with open(file_name, "r") as in_file:
@@ -830,6 +1165,8 @@ class Grid2D:
             self.__V[-1, j, 1] = v_cell
             self.__p[-1, j] = p_cell
 
+        self.__init_field_operator()
+
     def is_boundary(self, i, j):
         """
         Method is_boundary accepts i,j indicies of cell and return true if cell is a boundary one
@@ -845,48 +1182,57 @@ class Grid2D:
 
     def calculate_grad(self, mode, iter=1):
         if mode == 0:
-            grad_calc = self.__green_gauss
+            grad_calc = self.__green_gauss_scalar
+            grad_calc_vect = self.__green_gauss_vector
         if mode == 1:
-            grad_calc = self.__least_squares
+            grad_calc = self.__least_squares_scalar
+            grad_calc_vect = self.__green_gauss_vector
             iter = 1
 
         ni = self.__ni
         nj = self.__nj
-        self.__grad_p = np.zeros((ni + 1, nj + 1, 2), dtype=float)
-        self.__grad_T = np.zeros((ni + 1, nj + 1, 2), dtype=float)
-        self.__grad_u = np.zeros((ni + 1, nj + 1, 2), dtype=float)
-        self.__grad_v = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+        self.__grad_p[:, :, :] = 0.0
+        self.__grad_T[:, :, :] = 0.0
+        self.__grad_u[:, :, :] = 0.0
+        self.__grad_v[:, :, :] = 0.0
 
         for gg_iter in range(iter):
             for i in range(1, ni):
                 for j in range(1, nj):
                     grad_calc(i, j, self.__p, self.__grad_p)
                     grad_calc(i, j, self.__T, self.__grad_T)
-                    grad_calc(i, j, self.__V[:, :, 0], self.__grad_u)
-                    grad_calc(i, j, self.__V[:, :, 1], self.__grad_v)
+                    grad_calc_vect(i, j, self.__V, self.__grad_u, self.__grad_v)
 
     def calculate_convective_div(self, mode):
         ni = self.__ni
         nj = self.__nj
-        self.__div_TV = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__div_pV = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__div_Vu = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__div_Vv = np.zeros((ni + 1, nj + 1), dtype=float)
+        self.__div_TV[:, :] = 0.0
+        self.__div_pV[:, :] = 0.0
+        self.__div_Vu[:, :] = 0.0
+        self.__div_Vv[:, :] = 0.0
         for i in range(1, ni):
             for j in range(1, nj):
-                self.__conv_div(i, j, self.__p, self.__grad_p, self.__div_pV, mode=mode)
-                self.__conv_div(i, j, self.__T, self.__grad_T, self.__div_TV, mode=mode)
-                self.__conv_div(
-                    i, j, self.__V[:, :, 0], self.__grad_u, self.__div_Vu, mode=mode
+                self.__conv_div_scalar(
+                    i, j, self.__p, self.__grad_p, self.__div_pV, mode=mode
                 )
-                self.__conv_div(
-                    i, j, self.__V[:, :, 1], self.__grad_v, self.__div_Vv, mode=mode
+                self.__conv_div_scalar(
+                    i, j, self.__T, self.__grad_T, self.__div_TV, mode=mode
+                )
+                self.__conv_div_vector(
+                    i,
+                    j,
+                    self.__V,
+                    self.__grad_u,
+                    self.__grad_v,
+                    self.__div_Vu,
+                    self.__div_Vv,
+                    mode=mode,
                 )
 
     def calculate_div(self):
         ni = self.__ni
         nj = self.__nj
-        self.__div_V = np.zeros((ni + 1, nj + 1), dtype=float)
+        self.__div_V[:, :] = 0.0
         for i in range(1, ni):
             for j in range(1, nj):
                 self.__divergence(
@@ -896,7 +1242,7 @@ class Grid2D:
     def calculate_curl(self):
         ni = self.__ni
         nj = self.__nj
-        self.__curl_Vz = np.zeros((ni + 1, nj + 1), dtype=float)
+        self.__curl_Vz[:, :] = 0.0
         for i in range(1, ni):
             for j in range(1, nj):
                 self.__curl(
@@ -906,64 +1252,82 @@ class Grid2D:
     def calculate_laplacian(self):
         ni = self.__ni
         nj = self.__nj
-        self.__laplacian_p = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__laplacian_T = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__laplacian_u = np.zeros((ni + 1, nj + 1), dtype=float)
-        self.__laplacian_v = np.zeros((ni + 1, nj + 1), dtype=float)
+        self.__laplacian_p[:, :] = 0.0
+        self.__laplacian_T[:, :] = 0.0
+        self.__laplacian_u[:, :] = 0.0
+        self.__laplacian_v[:, :] = 0.0
         for i in range(1, ni):
             for j in range(1, nj):
-                self.__laplacian(i, j, self.__p, self.__grad_p, self.__laplacian_p)
-                self.__laplacian(i, j, self.__T, self.__grad_T, self.__laplacian_T)
-                self.__laplacian(
-                    i, j, self.__V[:, :, 0], self.__grad_u, self.__laplacian_u
+                self.__laplacian_scalar(
+                    i, j, self.__p, self.__grad_p, self.__laplacian_p
                 )
-                self.__laplacian(
-                    i, j, self.__V[:, :, 1], self.__grad_v, self.__laplacian_v
+                self.__laplacian_scalar(
+                    i, j, self.__T, self.__grad_T, self.__laplacian_T
+                )
+                self.__laplacian_vector(
+                    i,
+                    j,
+                    self.__V,
+                    self.__grad_u,
+                    self.__grad_v,
+                    self.__laplacian_u,
+                    self.__laplacian_v,
                 )
 
     def explicit_solve(self):
-        CFL = 0.1
+        CFL = 0.5
         min_vol = np.min(self.__cell_volume[:, :])
         v_ref = 1.0
         dt = np.sqrt(min_vol) * CFL / v_ref
         Re = 1000.0
         Pr = 1.0
-        iter = 10
+        iter = 500
 
         for j in range(1, self.__nj):
             self.__T[0, j] = self.__T[1, j]
             self.__T[-1, j] = self.__T[-2, j]
         for i in range(1, self.__ni):
-            self.__T[i, 0] = 0.0
-            self.__T[i, -1] = 2.0 - self.__T[i, -2]
+            self.__T[i, 0] = -self.__T[i, 1]
+            self.__T[i, -1] = 0.2 - self.__T[i, -2]
 
         T = np.zeros((self.__ni + 1, self.__nj + 1), dtype=float)
+        self.calculate_grad(mode=1)
+        self.calculate_div()
+        self.calculate_convective_div(mode=2)
+        self.calculate_curl()
+        self.calculate_laplacian()
+
         for n in range(iter):
             max_res_T = None
+
+            self.__div_TV[:, :] = 0.0
+            self.__laplacian_T[:, :] = 0.0
             for i in range(1, self.__ni):
                 for j in range(1, self.__nj):
-                    self.__least_squares(i, j, self.__T, self.__grad_T)
-                    self.__least_squares(i, j, self.__V[:, :, 0], self.__grad_u)
-                    self.__least_squares(i, j, self.__V[:, :, 1], self.__grad_v)
-                    self.__laplacian(i, j, self.__T, self.__grad_T, self.__laplacian_T)
-                    self.__conv_div(
-                        i, j, self.__T, self.__grad_T, self.__div_TV, mode=1
+                    self.__conv_div_scalar(
+                        i, j, self.__T, self.__grad_T, self.__div_TV, mode=2
                     )
-
-                    res_T = -self.__laplacian_T[i, j] / (Re * Pr) - self.__div_TV[i, j]
+                    self.__laplacian_scalar(
+                        i, j, self.__T, self.__grad_T, self.__laplacian_T
+                    )
+                    res_T = self.__laplacian_T[i, j] / (Re * Pr) - self.__div_TV[i, j]
                     if max_res_T is None or np.abs(res_T) > max_res_T:
                         max_res_T = np.abs(res_T)
+                        vol = self.__cell_volume[i - 1, j - 1]
                     T[i, j] = self.__T[i, j] + res_T * dt
 
-            for i in range(1, self.__ni):
-                for j in range(1, self.__nj):
-                    self.__T[i, j] = T[i, j]
+            self.__T[:, :] = T[:, :]
 
             for j in range(1, self.__nj):
                 self.__T[0, j] = self.__T[1, j]
                 self.__T[-1, j] = self.__T[-2, j]
             for i in range(1, self.__ni):
-                self.__T[i, 0] = 0.0
-                self.__T[i, -1] = 2.0 - self.__T[i, -2]
+                self.__T[i, 0] = -self.__T[i, 1]
+                self.__T[i, -1] = 0.2 - self.__T[i, -2]
 
-            print(f"{n} {max_res_T:.11e}")
+            self.__grad_T[:, :, :] = 0.0
+            for i in range(1, self.__ni):
+                for j in range(1, self.__nj):
+                    self.__least_squares_scalar(i, j, self.__T, self.__grad_T)
+
+            print(f"{n} {max_res_T * vol:.11e}")
