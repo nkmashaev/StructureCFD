@@ -1,167 +1,258 @@
 import os
-from typing import Tuple
 
 import numpy as np
 
-import cfd.field_operators as fop
-import cfd.functions as func
-import gridtools.grid_manager as gm
+from meshtools import metric
+from meshtools import output as out
+from meshtools import taskinit as inp
+from spatial import divergence, gradient
+from spatial import laplacian as lapl
+from spatial import rotor
 
-# pre_init
-scheme_dict = {
-    0: "vector divergence [ div(V)]",
-    1: "central scheme [ div(pV) ]",
-    2: "first order upwind [ div(pV) ]",
-    3: "second order upwind [ div(pV) ]",
-}
-dim = 2
 
-# reading initialize.txt file
-with open("initialize.txt", "r") as in_file:
-    file_name = in_file.readline().split("#")[0].strip()
-    iter_numb = int(in_file.readline().split("#")[0])
-    mode = int(in_file.readline().split("#")[0])
-    assert 0 <= mode <= 3
+def p_init(
+    x: float,
+    y: float,
+) -> float:
+    return x * x + y * y
 
-# print input parameters
-print("=" * 30)
-print("Info:")
-print(f"Mesh file name: {file_name}")
-print(f"Number of Green Gauss iterations: {iter_numb}")
-print(f"Divergence mode calculation approach: {mode} - {scheme_dict[mode]}")
-print("=" * 30)
 
-# reading mesh file
-print(f"Reading {file_name} mesh file...")
-x_arr, y_arr = gm.read_grid(file_name)
-i_size, j_size = x_arr.shape
+def gradp_exact_init_x(x: float, y: float) -> float:
+    return 1.0
 
-# initializing of arrays
-# cell_center_arr - array of cells centers. Allocating extra variables for dummy boundary cells
-# There is a shift of indices relative to cell_volume_array due to lack of volumes magnitude for dummies
-cell_center_arr = np.zeros((i_size + 1, j_size + 1, dim))
 
-# cell_volume_arr - array of cells' volumes. Only inner volumes are storaged - it is the cause of
-# inconsistency in a cell_center_arr and a cell_volume_arr indices
-cell_volume_arr = np.zeros((i_size - 1, j_size - 1))
+def gradp_exact_init_y(
+    x: float,
+    y: float,
+) -> float:
+    return 1.0
 
-# velocity_arr - array of velocity vectors' components.
-velocity_arr = np.zeros((i_size + 1, j_size + 1, dim))
 
-div_velocity = np.zeros((i_size + 1, j_size + 1))
-div_exact = np.zeros((i_size + 1, j_size + 1))
-div_error = np.zeros((i_size + 1, j_size + 1))
-curl_z_velocity = np.zeros((i_size + 1, j_size + 1))
-curl_z_exact = np.zeros((i_size + 1, j_size + 1))
-curl_z_error = np.zeros((i_size + 1, j_size + 1))
-grad_pressure = np.zeros((i_size + 1, j_size + 1, dim))
-grad_exact = np.zeros((i_size + 1, j_size + 1, dim))
-grad_error = np.zeros((i_size + 1, j_size + 1, dim))
-pressure_arr = np.zeros((i_size + 1, j_size + 1))
-i_face_center_arr = np.zeros((i_size, j_size - 1, dim))
-i_face_vector_arr = np.zeros((i_size, j_size - 1, dim))
-j_face_center_arr = np.zeros((i_size - 1, j_size, dim))
-j_face_vector_arr = np.zeros((i_size - 1, j_size, dim))
+def v_init_x(
+    x: float,
+    y: float,
+) -> float:
+    # return x
+    return (1 + x) * (1 + y)
 
-# metric calculation
-gm.calculate_metric(
-    i_size,
-    j_size,
-    x_arr,
-    y_arr,
-    cell_center_arr,
-    cell_volume_arr,
-    i_face_center_arr,
-    i_face_vector_arr,
-    j_face_center_arr,
-    j_face_vector_arr,
-)
 
-# initialization of fields
-print("Initiate fields")
-for i in range(i_size + 1):
-    for j in range(j_size + 1):
-        pressure_arr[i][j] = func.scalar_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1]
-        )
-        grad_exact[i][j] = func.grad_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1]
-        )
-        velocity_arr[i][j] = func.vector_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1]
-        )
-        div_exact[i][j] = func.div_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1], mode
-        )
-        curl_z_exact[i][j] = func.curl_center_init(
-            cell_center_arr[i][j][0], cell_center_arr[i][j][1]
-        )
+def v_init_y(
+    x: float,
+    y: float,
+) -> float:
+    # return y
+    return x * y
 
-for i in range(iter_numb):
-    fop.green_gauss(
-        i_size,
-        j_size,
-        pressure_arr,
-        grad_pressure,
-        cell_center_arr,
-        cell_volume_arr,
-        i_face_center_arr,
-        i_face_vector_arr,
-        j_face_center_arr,
-        j_face_vector_arr,
+
+def div_exact_init(x: float, y: float) -> float:
+    # mode = 0
+    # return 1 + x + y
+    return x * x + 4 * x * y + 2 * x + y * y + 2 * y + 1
+
+
+def rot_exact_init(
+    x: float,
+    y: float,
+) -> float:
+    # return 0.0
+    return 1 + x - y
+
+
+def laplacian_exact_init(
+    x: float,
+    y: float,
+) -> float:
+    return 4.0
+
+
+if __name__ == "__main__":
+    # read initialization parameters
+    input_name = os.path.join(os.path.dirname(__file__), "input.txt")
+    print(f'Read initialization parameters from file: "{input_name}"')
+    taskinit = inp.InputManager(input_name)
+    print(f'Mesh file name is "{taskinit.msh}"')
+    if not taskinit.data:
+        to_init = True
+    else:
+        to_init = False
+        print(f'Data file name is "{taskinit.data}"')
+    print(f"Number of green gauss iterations equals {taskinit.gauss_iter}")
+    print(f"Divergence calc method: {taskinit.div_mode[1]}")
+
+    # read mesh file
+    with open(taskinit.msh, "r") as in_file:
+        size_list = in_file.readline().strip().split()
+        ni = int(size_list[0])
+        nj = int(size_list[1])
+        x = np.zeros((ni, nj), dtype=float)
+        y = np.zeros((ni, nj), dtype=float)
+        cell_center = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+        cell_volume = np.zeros((ni + 1, nj + 1), dtype=float)
+        i_face_vector = np.zeros((ni, nj - 1, 2), dtype=float)
+        i_face_center = np.zeros((ni, nj - 1, 2), dtype=float)
+        j_face_vector = np.zeros((ni - 1, nj, 2), dtype=float)
+        j_face_center = np.zeros((ni - 1, nj, 2), dtype=float)
+        for j in range(nj):
+            for i in range(ni):
+                coord_list = in_file.readline().strip().split()
+                x[i, j] = float(coord_list[0])
+                y[i, j] = float(coord_list[1])
+
+    metric.calc_metric(
+        ni,
+        nj,
+        x,
+        y,
+        cell_center,
+        cell_volume,
+        i_face_center,
+        i_face_vector,
+        j_face_center,
+        j_face_vector,
     )
-    grad_error = abs(grad_exact - grad_pressure) / grad_exact
-    max_grad_err = np.max(grad_error[1:i_size, 1:j_size])
-    print(f"Maximum grad_error is {max_grad_err:.11E}")
 
+    outp = out.OutputManager(x, y)
 
-fop.divergence(
-    i_size,
-    j_size,
-    velocity_arr,
-    div_velocity,
-    pressure_arr,
-    grad_pressure,
-    cell_center_arr,
-    cell_volume_arr,
-    i_face_center_arr,
-    i_face_vector_arr,
-    j_face_center_arr,
-    j_face_vector_arr,
-    mode,
-)
-div_error = abs(div_exact - div_velocity) / div_exact
-max_div_err = np.amax(div_error[1:i_size, 1:j_size])
-print(f"Maximum div_error is {max_div_err:.11E}")
+    p = np.zeros((ni + 1, nj + 1), dtype=float)
+    gradp = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+    v = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+    div = np.zeros((ni + 1, nj + 1), dtype=float)
+    rot = np.zeros((ni + 1, nj + 1), dtype=float)
+    laplacian = np.zeros((ni + 1, nj + 1), dtype=float)
 
-fop.curl(
-    i_size,
-    j_size,
-    velocity_arr,
-    curl_z_velocity,
-    cell_center_arr,
-    cell_volume_arr,
-    i_face_center_arr,
-    i_face_vector_arr,
-    j_face_center_arr,
-    j_face_vector_arr,
-)
-curl_z_error = abs(curl_z_exact - curl_z_velocity) / curl_z_exact
-max_rot_z_err = np.amax(curl_z_error[1:i_size, 1:j_size])
-print(f"Maximum rotor_z_error is {max_rot_z_err:.11E}")
+    if to_init:
+        p[:, :] = p_init(cell_center[:, :, 0], cell_center[:, :, 1])
+        gradp_exact = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+        gradp_error = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+        gradp_exact[:, :, 0] = gradp_exact_init_x(
+            cell_center[:, :, 0], cell_center[:, :, 1]
+        )
+        gradp_exact[:, :, 1] = gradp_exact_init_y(
+            cell_center[:, :, 0], cell_center[:, :, 1]
+        )
+        v[:, :, 0] = v_init_x(cell_center[:, :, 0], cell_center[:, :, 1])
+        v[:, :, 1] = v_init_y(cell_center[:, :, 0], cell_center[:, :, 1])
+        div_exact = np.zeros((ni + 1, nj + 1), dtype=float)
+        div_exact[:, :] = div_exact_init(cell_center[:, :, 0], cell_center[:, :, 1])
+        div_error = np.zeros((ni + 1, nj + 1), dtype=float)
+        rot_exact = np.zeros((ni + 1, nj + 1), dtype=float)
+        rot_exact[:, :] = rot_exact_init(cell_center[:, :, 0], cell_center[:, :, 1])
+        rot_error = np.zeros((ni + 1, nj + 1), dtype=float)
+        laplacian_exact = np.zeros((ni + 1, nj + 1), dtype=float)
+        laplacian_exact[:] = laplacian_exact_init(
+            cell_center[:, :, 0], cell_center[:, :, 1]
+        )
+        laplacian_error = np.zeros((ni + 1, nj + 1), dtype=float)
+    else:
+        with open(taskinit.data, "r") as in_data:
+            in_data.readline()
+            in_data.readline()
+            for j in range(nj + 1):
+                for i in range(ni + 1):
+                    line = in_data.readline().strip().split()
+                    _, _, v[i, j, 0], v[i, j, 1], _, p[i, j], *_ = map(float, line)
 
-gm.output_data(
-    "data.plt",
-    i_size,
-    j_size,
-    x_arr,
-    y_arr,
-    pressure_arr,
-    velocity_arr,
-    grad_pressure,
-    grad_error,
-    div_velocity,
-    div_error,
-    curl_z_velocity,
-    curl_z_error,
-)
+    print("\nGradient calculation:")
+    for i in range(1, taskinit.gauss_iter + 1):
+        gradient.calc_gradient(
+            ni,
+            nj,
+            p,
+            gradp,
+            cell_volume,
+            cell_center,
+            i_face_center,
+            i_face_vector,
+            j_face_center,
+            j_face_vector,
+        )
+        if to_init:
+            gradp_error[1:ni, 1:nj, :] = np.absolute(
+                (gradp_exact[1:ni, 1:nj, :] - gradp[1:ni, 1:nj, :])
+                / gradp_exact[1:ni, 1:nj, :]
+            )
+            print(f"i = {i}:")
+            print("Maximum X-Gradient error: ", np.amax(gradp_error[:, :, 0]))
+            print("Maximum Y-Gradient error: ", np.amax(gradp_error[:, :, 1]))
+
+    print("\nCalculate divergence:")
+    divergence.calc_divergence(
+        ni,
+        nj,
+        v,
+        div,
+        p,
+        gradp,
+        cell_volume,
+        cell_center,
+        i_face_center,
+        i_face_vector,
+        j_face_center,
+        j_face_vector,
+        taskinit.div_mode[0],
+    )
+    if to_init:
+        div_error[1:ni, 1:nj] = np.absolute(
+            (div_exact[1:ni, 1:nj] - div[1:ni, 1:nj]) / div[1:ni, 1:nj]
+        )
+        print("Maximum divergence error: ", np.amax(div_error[:, :]))
+
+    print("\nCalculate rotor:")
+    rot_error = np.zeros((ni + 1, nj + 1), dtype=float)
+    rotor.calc_rotor(
+        ni,
+        nj,
+        v,
+        rot,
+        cell_volume,
+        cell_center,
+        i_face_center,
+        i_face_vector,
+        j_face_center,
+        j_face_vector,
+    )
+    if to_init:
+        rot_error[1:ni, 1:nj] = np.absolute(
+            (rot_exact[1:ni, 1:nj] - rot[1:ni, 1:nj]) / rot_exact[1:ni, 1:nj]
+        )
+        print("Maximum rotor error: ", np.amax(rot_error[:, :]))
+
+    print("\nCalculate laplacian:")
+    lapl.calc_laplacian(
+        ni,
+        nj,
+        p,
+        gradp,
+        laplacian,
+        cell_volume,
+        cell_center,
+        i_face_center,
+        i_face_vector,
+        j_face_center,
+        j_face_vector,
+    )
+    if to_init:
+        laplacian_error[1:ni, 1:nj] = np.absolute(
+            (laplacian_exact[1:ni, 1:nj] - laplacian[1:ni, 1:nj])
+            / laplacian_exact[1:ni, 1:nj]
+        )
+        print("Maximum laplacian error: ", np.amax(laplacian_error[:, :]))
+
+    print(f"Writing data in {taskinit.outfile}...")
+    outp.save_scalar("Pressure", p)
+    outp.save_scalar("X-Gradient Pressure", gradp[:, :, 0])
+    outp.save_scalar("Y-Gradient Pressure", gradp[:, :, 1])
+    outp.save_scalar("Laplacian Pressure", laplacian[:, :])
+    outp.save_scalar("X-Velocity", v[:, :, 0])
+    outp.save_scalar("Y-Velocity", v[:, :, 1])
+    outp.save_scalar("Divergence", div[:, :])
+    outp.save_scalar("Rotor-Z Velocity", rot[:, :])
+
+    if to_init:
+        outp.save_scalar("X-Gradient Error", gradp_error[:, :, 0])
+        outp.save_scalar("Y-Gradient Error", gradp_error[:, :, 1])
+        outp.save_scalar("Laplacian Error", laplacian_error[:, :])
+        outp.save_scalar("Divergence Error", div_error[:, :])
+        outp.save_scalar("Rotor-Z Error", rot_error[:, :])
+    outp.output(taskinit.outfile)
+    print("Done!")

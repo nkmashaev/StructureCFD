@@ -10,6 +10,11 @@ Install requirements by running
 ```Bash
 pip install -r requirements.txt
 ```
+or
+```Bash
+sudo pip3 install -r requirements.txt
+```
+
 
 Configure the program parameters in initialize.txt
 

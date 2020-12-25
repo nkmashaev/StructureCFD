@@ -1,0 +1,5 @@
+mesh=grids/wedge.msh
+outfile=data.plt
+data=data/wedge.plt
+gauss_iter=15
+div_mode=0
