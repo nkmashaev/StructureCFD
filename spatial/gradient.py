@@ -4,7 +4,7 @@ from numpy import linalg as la
 from spatial.interp import linear_interp
 
 
-def calc_gradient(
+def green_gauss(
     ni: int,
     nj: int,
     p: np.ndarray,
@@ -76,3 +76,54 @@ def calc_gradient(
 
             if vol_right >= 1e-14:
                 gradp[i + 1, j + 1, :] -= sf[:] * pf / vol_right
+
+
+def least_squares(
+    ni: int,
+    nj: int,
+    p: np.ndarray,
+    gradp: np.ndarray,
+    cell_volume: np.ndarray,
+    cell_center: np.ndarray,
+    i_face_center: np.ndarray,
+    i_face_vector: np.ndarray,
+    j_face_center: np.ndarray,
+    j_face_vector: np.ndarray,
+):
+    gradp[:, :, :] = 0.0
+    rc = np.zeros(2, dtype=float)
+    rn = np.zeros(2, dtype=float)
+
+    for i in range(1, ni):
+        for j in range(1, nj):
+            ncell = np.array(
+                [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]], dtype=int
+            )
+            dx_dx = 0.0
+            dx_dy = 0.0
+            dy_dy = 0.0
+            rc[:] = cell_center[i, j, :]
+            for neighbour in ncell:
+                i_n, j_n = neighbour
+                rn[:] = cell_center[i_n, j_n, :]
+                dx = rn[0] - rc[0]
+                dy = rn[1] - rc[1]
+                weight_sqr = 1.0 / (dx * dx + dy * dy)
+                dx_dx += dx * dx * weight_sqr
+                dx_dy += dx * dy * weight_sqr
+                dy_dy += dy * dy * weight_sqr
+
+            r11 = np.sqrt(dx_dx)
+            r12 = dx_dy / r11
+            r22 = np.sqrt(dy_dy - r12 * r12)
+
+            for neighbour in ncell:
+                i_n, j_n = neighbour
+                rn[:] = cell_center[i_n, j_n, :]
+                dx = rn[0] - rc[0]
+                dy = rn[1] - rc[1]
+                weight_sqr = 1 / (dx * dx + dy * dy)
+                a1 = dx / (r11 * r11)
+                a2 = (dy - r12 * dx / r11) / (r22 * r22)
+                theta = np.array([a1 - r12 * a2 / r11, a2], dtype=float)
+                gradp[i, j, :] += theta[:] * (p[i_n, j_n] - p[i, j]) * weight_sqr

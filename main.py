@@ -10,59 +10,86 @@ from spatial import laplacian as lapl
 from spatial import rotor
 
 
-def p_init(
-    x: float,
-    y: float,
-) -> float:
-    return x * x + y * y
+def p_init(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return x + y
+    if func_id == 2:
+        return (x + y) ** 2
+    if func_id == 3:
+        return (x + y) ** 3
 
 
-def gradp_exact_init_x(x: float, y: float) -> float:
-    return 1.0
+def gradp_exact_init_x(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return 1.0
+    if func_id == 2:
+        return 2.0 * (x + y)
+    if func_id == 3:
+        return 3.0 * (x + y) ** 2
 
 
-def gradp_exact_init_y(
-    x: float,
-    y: float,
-) -> float:
-    return 1.0
+def gradp_exact_init_y(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return 1.0
+    if func_id == 2:
+        return 2.0 * (x + y)
+    if func_id == 3:
+        return 3.0 * (x + y) ** 2
 
 
-def v_init_x(
-    x: float,
-    y: float,
-) -> float:
-    # return x
-    return (1 + x) * (1 + y)
+def v_init_x(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return x + 2 * y
+    if func_id == 2:
+        return (x - y) ** 2 + 3.0 * x * y
+    if func_id == 3:
+        return (x - y) ** 3 + 3.0 * x ** 2 * y
 
 
-def v_init_y(
-    x: float,
-    y: float,
-) -> float:
-    # return y
-    return x * y
+def v_init_y(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return 0.5 * x + y
+    if func_id == 2:
+        return (x + y) ** 2 + 3.0 * x * y
+    if func_id == 3:
+        return (x + y) ** 3 + 3.0 * x * y ** 2
 
 
-def div_exact_init(x: float, y: float) -> float:
-    # mode = 0
-    # return 1 + x + y
-    return x * x + 4 * x * y + 2 * x + y * y + 2 * y + 1
+def div_exact_init(x: float, y: float, func_id: int = 1, mode: int = 0) -> float:
+    if func_id == 1:
+        if mode == 0:
+            return 2.0
+        return 3.5 * x + 5.0 * y
+    if func_id == 2:
+        if mode == 0:
+            return 7.0 * x + 3.0 * y
+        return 11.0 * x ** 3 + 33.0 * x ** 2 * y + 29 * x * y ** 2 + 7.0 * y ** 3
+    if func_id == 3:
+        if mode == 0:
+            return 6.0 * (x + y) ** 2
+        return (
+            3.0
+            * (x + y) ** 2
+            * (4.0 * x ** 3 + 9.0 * x ** 2 * y + 15.0 * x * y ** 2 + 2.0 * y ** 3)
+        )
 
 
-def rot_exact_init(
-    x: float,
-    y: float,
-) -> float:
-    # return 0.0
-    return 1 + x - y
+def rot_exact_init(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return -1.5
+    if func_id == 2:
+        return x + 3.0 * y
+    if func_id == 3:
+        return 3.0 * (x ** 2 + 3.0 * y ** 2)
 
 
-def laplacian_exact_init(
-    x: float,
-    y: float,
-) -> float:
-    return 4.0
+def laplacian_exact_init(x: float, y: float, func_id: int = 1) -> float:
+    if func_id == 1:
+        return 0.0
+    if func_id == 2:
+        return 4.0
+    if func_id == 3:
+        return 12.0 * (x + y)
 
 
 if __name__ == "__main__":
@@ -76,7 +103,10 @@ if __name__ == "__main__":
     else:
         to_init = False
         print(f'Data file name is "{taskinit.data}"')
-    print(f"Number of green gauss iterations equals {taskinit.gauss_iter}")
+
+    print(f"Gradient calculation approach: {taskinit.grad[1]}")
+    if taskinit.grad[0] == 0:
+        print(f"Number of green gauss iterations equals {taskinit.gauss_iter}")
     print(f"Divergence calc method: {taskinit.div_mode[1]}")
 
     # read mesh file
@@ -121,28 +151,37 @@ if __name__ == "__main__":
     laplacian = np.zeros((ni + 1, nj + 1), dtype=float)
 
     if to_init:
-        p[:, :] = p_init(cell_center[:, :, 0], cell_center[:, :, 1])
+        p[:, :] = p_init(cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc)
         gradp_exact = np.zeros((ni + 1, nj + 1, 2), dtype=float)
-        gradp_error = np.zeros((ni + 1, nj + 1, 2), dtype=float)
+
         gradp_exact[:, :, 0] = gradp_exact_init_x(
-            cell_center[:, :, 0], cell_center[:, :, 1]
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
         )
         gradp_exact[:, :, 1] = gradp_exact_init_y(
-            cell_center[:, :, 0], cell_center[:, :, 1]
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
         )
-        v[:, :, 0] = v_init_x(cell_center[:, :, 0], cell_center[:, :, 1])
-        v[:, :, 1] = v_init_y(cell_center[:, :, 0], cell_center[:, :, 1])
+        v[:, :, 0] = v_init_x(
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
+        )
+        v[:, :, 1] = v_init_y(
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
+        )
         div_exact = np.zeros((ni + 1, nj + 1), dtype=float)
-        div_exact[:, :] = div_exact_init(cell_center[:, :, 0], cell_center[:, :, 1])
-        div_error = np.zeros((ni + 1, nj + 1), dtype=float)
+        div_exact[:, :] = div_exact_init(
+            cell_center[:, :, 0],
+            cell_center[:, :, 1],
+            taskinit.testfunc,
+            taskinit.div_mode[0],
+        )
         rot_exact = np.zeros((ni + 1, nj + 1), dtype=float)
-        rot_exact[:, :] = rot_exact_init(cell_center[:, :, 0], cell_center[:, :, 1])
-        rot_error = np.zeros((ni + 1, nj + 1), dtype=float)
+        rot_exact[:, :] = rot_exact_init(
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
+        )
         laplacian_exact = np.zeros((ni + 1, nj + 1), dtype=float)
         laplacian_exact[:] = laplacian_exact_init(
-            cell_center[:, :, 0], cell_center[:, :, 1]
+            cell_center[:, :, 0], cell_center[:, :, 1], taskinit.testfunc
         )
-        laplacian_error = np.zeros((ni + 1, nj + 1), dtype=float)
+        # laplacian_error = np.zeros((ni + 1, nj + 1), dtype=float)
     else:
         with open(taskinit.data, "r") as in_data:
             in_data.readline()
@@ -153,8 +192,12 @@ if __name__ == "__main__":
                     _, _, v[i, j, 0], v[i, j, 1], _, p[i, j], *_ = map(float, line)
 
     print("\nGradient calculation:")
+    if taskinit.grad[0] == 0:
+        calc_gradient = gradient.green_gauss
+    elif taskinit.grad[0] == 1:
+        calc_gradient = gradient.least_squares
     for i in range(1, taskinit.gauss_iter + 1):
-        gradient.calc_gradient(
+        calc_gradient(
             ni,
             nj,
             p,
@@ -167,13 +210,18 @@ if __name__ == "__main__":
             j_face_vector,
         )
         if to_init:
-            gradp_error[1:ni, 1:nj, :] = np.absolute(
-                (gradp_exact[1:ni, 1:nj, :] - gradp[1:ni, 1:nj, :])
-                / gradp_exact[1:ni, 1:nj, :]
+            gradp_error = np.absolute(
+                np.divide(
+                    gradp_exact - gradp,
+                    gradp_exact,
+                    out=np.zeros_like(gradp_exact - gradp),
+                    where=np.absolute(gradp_exact) > 1.0e-14,
+                )
             )
-            print(f"i = {i}:")
-            print("Maximum X-Gradient error: ", np.amax(gradp_error[:, :, 0]))
-            print("Maximum Y-Gradient error: ", np.amax(gradp_error[:, :, 1]))
+            if taskinit.grad[0] == 0:
+                print(f"i = {i}:")
+            print("Maximum X-Gradient error: ", np.amax(gradp_error[1:ni, 1:nj, 0]))
+            print("Maximum Y-Gradient error: ", np.amax(gradp_error[1:ni, 1:nj, 1]))
 
     print("\nCalculate divergence:")
     divergence.calc_divergence(
@@ -192,10 +240,15 @@ if __name__ == "__main__":
         taskinit.div_mode[0],
     )
     if to_init:
-        div_error[1:ni, 1:nj] = np.absolute(
-            (div_exact[1:ni, 1:nj] - div[1:ni, 1:nj]) / div[1:ni, 1:nj]
+        div_error = np.absolute(
+            np.divide(
+                div_exact - div,
+                div_exact,
+                out=np.zeros_like(div_exact - div),
+                where=np.absolute(div_exact) > 1.0e-14,
+            )
         )
-        print("Maximum divergence error: ", np.amax(div_error[:, :]))
+        print("Maximum divergence error: ", np.amax(div_error[1:ni, 1:nj]))
 
     print("\nCalculate rotor:")
     rot_error = np.zeros((ni + 1, nj + 1), dtype=float)
@@ -212,10 +265,15 @@ if __name__ == "__main__":
         j_face_vector,
     )
     if to_init:
-        rot_error[1:ni, 1:nj] = np.absolute(
-            (rot_exact[1:ni, 1:nj] - rot[1:ni, 1:nj]) / rot_exact[1:ni, 1:nj]
+        rot_error = np.absolute(
+            np.divide(
+                rot_exact - rot,
+                rot_exact,
+                out=np.zeros_like(rot_exact - rot),
+                where=np.absolute(rot_exact) > 1.0e-14,
+            )
         )
-        print("Maximum rotor error: ", np.amax(rot_error[:, :]))
+        print("Maximum rotor error: ", np.amax(rot_error[1:ni, 1:nj]))
 
     print("\nCalculate laplacian:")
     lapl.calc_laplacian(
@@ -232,11 +290,15 @@ if __name__ == "__main__":
         j_face_vector,
     )
     if to_init:
-        laplacian_error[1:ni, 1:nj] = np.absolute(
-            (laplacian_exact[1:ni, 1:nj] - laplacian[1:ni, 1:nj])
-            / laplacian_exact[1:ni, 1:nj]
+        laplacian_error = np.absolute(
+            np.divide(
+                laplacian_exact - laplacian,
+                laplacian_exact,
+                out=np.zeros_like(laplacian_exact - laplacian),
+                where=np.absolute(laplacian_exact) > 1.0e-14,
+            )
         )
-        print("Maximum laplacian error: ", np.amax(laplacian_error[:, :]))
+        print("Maximum laplacian error: ", np.amax(laplacian_error[1:ni, 1:nj]))
 
     print(f"Writing data in {taskinit.outfile}...")
     outp.save_scalar("Pressure", p)

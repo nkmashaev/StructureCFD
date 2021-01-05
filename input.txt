@@ -1,5 +1,4 @@
-mesh=grids/wedge.msh
-outfile=data.plt
-data=data/wedge.plt
-gauss_iter=15
-div_mode=0
+mesh=grids/fine.msh # grid file name
+grad=1
+testfunc=2
+div_mode=3

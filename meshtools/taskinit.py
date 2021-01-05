@@ -1,3 +1,4 @@
+import os
 from typing import Tuple
 
 
@@ -31,7 +32,11 @@ class InputManager:
         self.__storage = {}
         with open(file_path, "r") as in_file:
             for line in in_file:
-                key, val = line.strip().split("=", 1)
+                line = line.strip().split("#", 1)[0]
+                try:
+                    key, val, *_ = line.strip().split("=", 1)
+                except ValueError:
+                    continue
 
                 if not key.isidentifier():
                     raise ValueError(
@@ -49,23 +54,37 @@ class InputManager:
             raise AttributeError("Error: Mesh file name not found!")
         if not isinstance(self.__storage["mesh"], str):
             raise TypeError("Error: Mesh file name expected to be string!")
-        if not "div_mode" in self.__storage:
-            raise AttributeError("Error: Divergence calc mode not found!")
-        if not isinstance(self.__storage["div_mode"], int):
-            raise TypeError("Error: Divergence calc mode expected to be integer!")
-        if self.__storage["div_mode"] < 0 or self.__storage["div_mode"] > 3:
-            raise ValueError("Error: Unknown divergence calc mode!")
-        if not "gauss_iter" in self.__storage:
-            raise AttributeError(
-                "Error: Number of green gauss method's iteration not found!"
+
+        if not isinstance(self.__storage.get("grad", 0), int):
+            raise TypeError(
+                "Error: Gradient calculation approach id" + "expected to be integer!"
             )
-        if not isinstance(self.__storage["gauss_iter"], int):
+        if not (0 <= self.__storage.get("grad", 0) <= 1):
+            raise ValueError("Error: Unknown gradient calculation approach id!")
+
+        if not isinstance(self.__storage.get("div_mode", 0), int):
+            raise TypeError("Error: Divergence calc mode expected to be integer!")
+        if not (0 <= self.__storage.get("div_mode", 0) <= 3):
+            raise ValueError("Error: Unknown divergence calc mode!")
+
+        if not isinstance(self.__storage.get("gauss_iter", 1), int):
             raise TypeError(
                 "Error: Number of green gauss method's"
                 + "iteration expected to be integer!"
             )
-        if "data" in self.__storage and not isinstance(self.__storage["data"], str):
+        if not self.__storage.get("gauss_iter", 1) > 0:
+            raise ValueError(
+                "Error: Number of green gauss method's"
+                + "iteration expected to be positive!"
+            )
+
+        if not isinstance(self.__storage.get("data", ""), str):
             raise TypeError("Error: Data file name expected to be string!")
+
+        if not isinstance(self.__storage.get("testfunc", 1), int):
+            raise TypeError("Error: Test func id expected to be int!")
+        if not (1 <= self.__storage.get("testfunc", 1) <= 3):
+            raise ValueError("Error: Unknown test function id!")
 
     @property
     def msh(self) -> str:
@@ -73,7 +92,7 @@ class InputManager:
 
     @property
     def div_mode(self) -> Tuple[int, str]:
-        mode = self.__storage["div_mode"]
+        mode = self.__storage.get("div_mode", 0)
         if mode == 0:
             return mode, "standard operator"
         if mode == 1:
@@ -84,17 +103,25 @@ class InputManager:
             return mode, "second order upwind scheme"
 
     @property
+    def grad(self) -> Tuple[int, str]:
+        grad_scheme = self.__storage.get("grad", 0)
+        if grad_scheme == 0:
+            return grad_scheme, "Green Gauss"
+        if grad_scheme == 1:
+            return grad_scheme, "Least Squares"
+
+    @property
     def gauss_iter(self) -> int:
-        return self.__storage["gauss_iter"]
+        return self.__storage.get("gauss_iter", 1)
 
     @property
     def data(self) -> str:
-        if "data" in self.__storage:
-            return self.__storage["data"]
-        return ""
+        return self.__storage.get("data", "")
 
     @property
     def outfile(self) -> str:
-        if "outfile" in self.__storage:
-            return self.__storage["outfile"]
-        return "data.plt"
+        return self.__storage.get("outfile", "data.plt")
+
+    @property
+    def testfunc(self) -> int:
+        return self.__storage.get("testfunc", 1)
