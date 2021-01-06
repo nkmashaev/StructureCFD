@@ -36,7 +36,7 @@ def calc_rotor(
             v_left[:] = v[i, j + 1, :]
 
             vf[:] = linear_interp(d_right, d_left, v_right[:], v_left[:])
-            add = -(sf[0] * vf[1] - sf[1] * vf[0])
+            add = sf[0] * vf[1] - sf[1] * vf[0]
             if abs(vol_left) >= 1e-14:
                 rot[i, j + 1] += add / vol_left
 
@@ -59,7 +59,7 @@ def calc_rotor(
             v_left[:] = v[i + 1, j, :]
 
             vf[:] = linear_interp(d_right, d_left, v_right[:], v_left[:])
-            add = -(sf[0] * vf[1] - sf[1] * vf[0])
+            add = sf[0] * vf[1] - sf[1] * vf[0]
             if abs(vol_left) >= 1e-14:
                 rot[i + 1, j] += add / vol_left
             if abs(vol_right) >= 1e-14:

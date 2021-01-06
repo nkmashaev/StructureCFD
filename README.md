@@ -16,7 +16,7 @@ sudo pip3 install -r requirements.txt
 ```
 
 
-Configure the program parameters in initialize.txt
+Configure the program parameters in input.txt
 
 ## How to execute
 -------------------------------------------
